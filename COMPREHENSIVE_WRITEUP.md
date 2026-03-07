@@ -224,6 +224,39 @@ This proves that physics constraints don't just make motion look better — they
 | SA-HMR (CVPR'23) | Contact-scene estimation | P/R 0.57/0.53 on RICH | Includes scene-aware HMR |
 | IPMAN (CVPR'23) | CoP/CoM stability | Evaluated on RICH, MoYo | Biomechanics-based |
 
+### PhysHMR (SIGGRAPH Asia'25) — Critical Recent Work
+
+**End-to-end visual-to-action policy** — eliminates two-stage pipeline entirely. Uses pixel-as-ray to lift 2D keypoints into 3D rays, combines RL + knowledge distillation.
+
+#### Results on EMDB-2
+
+| Method | PA-MPJPE | WA-MPJPE | MPJPE | Foot Slide | Height Viol. | Accel |
+|--------|----------|---------|-------|------------|-------------|-------|
+| TRAM | 35.51 | 148.05 | 56.74 | 11.76 | 22.97 | 4.77 |
+| GVHMR | 40.95 | 228.67 | 65.21 | 5.65 | 26.42 | 5.40 |
+| GVHMR × PHC+ (two-stage) | 46.24 | 193.01 | 72.50 | **12.71** | 7.71 | 7.43 |
+| **PhysHMR (end-to-end)** | **39.34** | **189.26** | **55.48** | **4.60** | **5.04** | **5.49** |
+
+**Critical finding:** Two-stage physics post-processing (GVHMR × PHC+) actually **worsens** foot sliding from 5.65→12.71mm because excessive limb movements during balance recovery create new artifacts. End-to-end integration avoids this.
+
+**Implication for our project:** This suggests the physics layer should be tightly coupled with the body tracker (differentiable losses during optimization, not pure post-processing). Our approach should use optimization-based refinement (PROX/LEMO style energy terms) rather than RL post-correction, which avoids the balance-recovery artifacts PhysHMR identified in two-stage methods.
+
+### Additional Physics-Aware Methods (2025-2026)
+
+- **BioMoDiffuse** (arXiv Mar'25): Physics-guided biomechanical diffusion using muscle EMG + Euler-Lagrange dynamics
+- **FlexMotion** (arXiv Jan'25): Latent-space diffusion with OpenSim physics augmentation
+- **"Measuring Physical Plausibility"** (BMVC'24): Proposes CoM Distance and Pose Stability Duration as better metrics than heuristic FS/GP
+- **GECO** (2025): GPT-driven 3D human-scene contact estimation, competitive with DECO
+
+### Contact Estimation Methods
+
+| Method | Year | Task | Key Metric |
+|--------|------|------|-----------|
+| DECO | ICCV'23 | Vertex-level contact from RGB | Trained on DAMON; over-predicts foot contact |
+| SA-HMR | CVPR'23 | Contact-scene estimation | P/R 0.57/0.53 on RICH |
+| IPMAN | CVPR'23 | CoP/CoM biomechanical stability | Differentiable, easy to integrate |
+| DecoDINO | 2025 | Semantic contact classification | Extends DECO with object labels |
+
 ### Summary of Evidence: Physics Constraints Work
 
 | Study | What Was Added | Key Improvement |
@@ -233,6 +266,10 @@ This proves that physics constraints don't just make motion look better — they
 | PhysDiff | Physics in diffusion denoising | 86% less physical error |
 | PROX | SDF penetration + contact terms | 24% better V2V |
 | LEMO | Friction + smoothness prior | Eliminates skating + jitter |
+| SimPoE | Sim-based pose estimation | MPJPE 56.7 + FS 3.4 + GP 1.6 (all SOTA simultaneously) |
+| **PhysHMR** | **End-to-end visual→physics** | **Best on all metrics; two-stage hurts** |
+
+**The trend is clear:** Integrated physics consistently improves both plausibility AND accuracy. The field is moving from post-hoc optimization (PROX, LEMO) toward learned RL policies in physics simulators (SimPoE, MultiPhys, PhysHMR, CRISP).
 
 ---
 
@@ -343,19 +380,27 @@ Input: Monocular RGB Video
          │     └── Per-frame metric depth + pointmaps
          │         + camera poses
          │
-         └── Physics Layer (MuJoCo)
+         └── Physics Refinement Layer
+               │
+               │  NOTE: PhysHMR (SigAsia'25) showed two-stage RL
+               │  post-correction can WORSEN foot sliding (5.65→12.71mm).
+               │  We use optimization-based energy minimization instead,
+               │  which avoids balance-recovery artifacts.
+               │
                ├── Ground Plane (RANSAC on pointmap)
                ├── Scene Collision Mesh (pointmap → mesh)
                ├── Contact Detection (foot velocity + proximity)
-               ├── Correction Loop:
-               │     ├── Foot contact → pin to surface
-               │     ├── Non-penetration → SDF penalty
-               │     ├── Friction cones → prevent skating
-               │     ├── CoM/CoP stability (IPMAN-style)
-               │     └── Temporal smoothing → reduce jitter
+               ├── Differentiable Energy Optimization:
+               │     ├── E_contact: foot/body → pin to surface (PROX-style)
+               │     ├── E_penetration: SDF non-intersection (PROX-style)
+               │     ├── E_friction: velocity penalty on contact verts (LEMO)
+               │     ├── E_stability: CoM/CoP balance (IPMAN)
+               │     └── E_smooth: temporal jerk minimization
+               ├── MuJoCo Validation (not correction):
+               │     └── Simulate refined motion → verify plausibility
                └── Output: Simulation-ready motion
                      + contact labels
-                     + per-frame metrics
+                     + per-frame metrics (FS, GP, Pen., Jitter)
 ```
 
 ### License-Safe Stack
@@ -439,6 +484,18 @@ Single consumer GPU (RTX 3090/4090) is sufficient.
 - Unified camera + human trajectory estimation
 - Very recent, maturity TBD
 
+### PhysHMR (SIGGRAPH Asia'25) — Must-Read
+- End-to-end visual-to-action policy (no two-stage pipeline)
+- Best simultaneous accuracy + physics on EMDB-2: PA-MPJPE 39.34, FS 4.60, HV 5.04
+- **Critical negative result:** Two-stage (GVHMR × PHC+) worsens foot sliding from 5.65→12.71
+- User study: 66.3% preferred PhysHMR over alternatives
+- Implications: optimization-based refinement (energy minimization) is safer than RL post-correction
+
+### SimPoE (CVPR'21) — Historical Milestone
+- First method to achieve SOTA accuracy AND physics plausibility simultaneously
+- MPJPE 56.7 + FS 3.4 + GP 1.6 on H3.6M (all best)
+- Meta-PD control for dynamic PD parameter adjustment
+
 ---
 
 ## Appendix B: Physics & Simulation Stack
@@ -507,12 +564,15 @@ def trajectory_drift(root_world, dt):
 - VGGT: Meta, CVPR 2025 Best Paper — [github.com/facebookresearch/vggt](https://github.com/facebookresearch/vggt)
 
 ### Physics-Aware Methods
+- **PhysHMR:** Feng et al., SIGGRAPH Asia 2025 — [arXiv 2510.02566](https://arxiv.org/abs/2510.02566) *(critical: shows two-stage hurts)*
 - MultiPhys: Ugrinovic et al., CVPR 2024 — [github.com/nicolasugrinovic/multiphys](https://github.com/nicolasugrinovic/multiphys)
 - CRISP: Wang et al., arXiv 2025 — [crisp-real2sim.github.io](https://crisp-real2sim.github.io/CRISP-Real2Sim/)
 - PhysDiff: Yuan et al., ICCV 2023 — [nvlabs.github.io/PhysDiff](https://nvlabs.github.io/PhysDiff/)
+- SimPoE: Yuan et al., CVPR 2021 *(first to achieve SOTA accuracy + physics simultaneously)*
 - PROX: Hassan et al., ICCV 2019 — [prox.is.tue.mpg.de](https://prox.is.tue.mpg.de/)
 - LEMO: Zhang et al., ICCV 2021 — [github.com/sanweiliti/LEMO](https://github.com/sanweiliti/LEMO)
 - IPMAN: Tripathi et al., CVPR 2023
+- DECO: Tripathi et al., ICCV 2023 — vertex-level contact from RGB
 
 ### Joint Reconstruction
 - JOSH: ICLR 2026 — [github.com/genforce/JOSH](https://github.com/genforce/JOSH)
