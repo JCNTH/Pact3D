@@ -101,9 +101,9 @@ def slide_num(slide, n):
 
 
 def header(slide, subtitle=""):
-    """Consistent header: bold 'Pact3D' top-left + subtitle."""
+    """Consistent header: bold 'Tracking' top-left + subtitle."""
     tx(slide, Inches(0.5), Inches(0.3), Inches(4), Inches(0.5),
-       "Pact3D", sz=28, bold=True, color=TEXT)
+       "Tracking", sz=28, bold=True, color=TEXT)
     if subtitle:
         tx(slide, Inches(0.5), Inches(0.75), Inches(8), Inches(0.4),
            subtitle, sz=18, color=TEXT)
@@ -185,10 +185,10 @@ s = prs.slides.add_slide(blank)
 s.background.fill.solid()
 s.background.fill.fore_color.rgb = RGBColor(0x00, 0x88, 0x80)  # teal like PDF
 tx(s, Inches(2), Inches(2.8), Inches(9), Inches(1.0),
-   "Pact3D", sz=72, bold=True,
+   "Tracking", sz=72, bold=True,
    color=RGBColor(0xFF, 0xFF, 0xFF), align=PP_ALIGN.CENTER)
 tx(s, Inches(2), Inches(4.0), Inches(9), Inches(0.6),
-   "Physics-Aware Contact Tracking in 3D",
+   "3D Human Pose/Motion Tracking",
    sz=24, color=RGBColor(0xFF, 0xFF, 0xFF), align=PP_ALIGN.CENTER)
 slide_num(s, 1)
 
@@ -214,7 +214,7 @@ multi(s, Inches(0.5), Inches(1.3), Inches(12), Inches(5.5), [
     ("    • Interaction (scene/objects)", 16, TEXT, False),
     ("    • Physics-aware, simulation-ready", 16, TEXT, False),
     ("", 14, DIM, False),
-    ("→  Pact3D sits here: physics-aware joint human-scene tracking", 18, ACCENT, True),
+    ("→  Our focus: physics-aware joint human-scene tracking", 18, ACCENT, True),
 ])
 slide_num(s, 2)
 
@@ -269,7 +269,7 @@ multi(s, Inches(0.5), Inches(1.3), Inches(6.0), Inches(5.0), [
     ("Physics constraints — gravity, contact,", 18, ACCENT, True),
     ("friction, and collision.", 18, ACCENT, True),
     ("", 12, DIM, False),
-    ("Pact3D = body tracker + scene geometry", 16, TEXT, False),
+    ("Approach = body tracker + scene geometry", 16, TEXT, False),
     ("             + physics refinement layer", 16, TEXT, False),
 ])
 
@@ -808,7 +808,7 @@ tbl(s, Inches(6.5), Inches(1.3), Inches(6.3), [
 
 tan_box(s, Inches(6.5), Inches(5.3), Inches(6.3), Inches(1.2))
 multi(s, Inches(6.7), Inches(5.4), Inches(5.9), Inches(1.0), [
-    ("Pact3D: combine Human3R + DA3 + physics layer", 15, ACCENT, True),
+    ("Combine Human3R + DA3 + physics layer", 15, ACCENT, True),
     ("to produce simulation-ready motion from video.", 15, ACCENT, False),
     ("Training-free. Single GPU. 8 weeks.", 14, TEXT, True),
 ])
