@@ -116,13 +116,24 @@ MultiPhys: W-MPJPE 177.1 → 174.7mm (physics correction *helped* pose estimatio
 
 ### Capabilities Matrix
 
-| Feature | DA3 | Metric3D v2 | CUT3R | VGGT |
-|---------|-----|------------|-------|------|
-| Metric depth | Yes | **Best** | Yes | Yes |
-| Camera poses | **Yes** | No | Yes | Yes |
-| Pointmaps | **Yes** | No | Yes | Yes |
-| Streaming video | **Yes (<12GB)** | No | Yes | No |
-| License | **Apache-2.0** | Apache-2.0 | CC BY-NC-SA | Custom |
+| Feature | DA3 | Metric3D v2 | CUT3R | VGGT | ZipMap |
+|---------|-----|------------|-------|------|--------|
+| Metric depth | Yes | **Best** | Yes | Yes | No (relative) |
+| Camera poses | **Yes** | No | Yes | Yes | Yes |
+| Pointmaps | **Yes** | No | Yes | Yes | Yes |
+| Streaming video | **Yes (<12GB)** | No | Yes | No | No (batch) |
+| Code released | **Yes** | Yes | Yes | Yes | **No** |
+| Consumer GPU | **Yes** | Yes | Yes | Tight | **No (H100)** |
+| License | **Apache-2.0** | Apache-2.0 | CC BY-NC-SA | Custom | Unreleased |
+
+### Why Not ZipMap?
+- **No metric depth** — we need real-world scale (meters) for physics constraints (ground plane, SDF penetration). ZipMap gives relative reconstruction.
+- **Code unreleased** — CVPR 2026 paper, not yet available. DA3 is shipped and tested.
+- **Wrong primitive** — ZipMap reconstructs static scenes from unordered image collections. We need per-frame metric depth from streaming video.
+- **Hardware** — ZipMap benchmarks on H100. DA3 runs at 78 FPS on RTX 3090/4090.
+- **Overkill** — Full scene reconstruction when we only need a ground plane (RANSAC) + collision mesh.
+
+**ZipMap is the right tool for building a full 3DGS environment. DA3 is the right tool for per-frame physics constraints on body motion.**
 
 ### Runtime
 
@@ -131,6 +142,7 @@ MultiPhys: W-MPJPE 177.1 → 174.7mm (physics correction *helped* pose estimatio
 | **DA3-Large** | **78** | **<12 GB** | **Any length** |
 | DA3-Small | 161 | ~5 GB | Any length |
 | VGGT | ~60 | 8-40+ GB | ~60 frames max |
+| ZipMap | 75 | H100 required | Batch only |
 
 ---
 
@@ -152,16 +164,40 @@ Monocular RGB Video
                +-- Contact Detection (foot velocity + proximity)
                |
                +-- Energy Minimization:
-               |     E_contact      pin feet to surface
-               |     E_penetration  SDF non-intersection
-               |     E_friction     no sliding during contact
-               |     E_stability    CoM/CoP balance
-               |     E_smooth       temporal jerk penalty
+               |     E_contact      pin feet to surface        (PROX)
+               |     E_penetration  SDF non-intersection       (PROX)
+               |     E_friction     no sliding during contact  (LEMO)
+               |     E_stability    CoM/CoP balance            (IPMAN)
+               |     E_smooth       temporal jerk penalty      (LEMO)
                |
                +-- MuJoCo Validation (verify, don't correct)
                |
                -> Simulation-ready motion + contact labels
 ```
+
+### Why This Physics Approach
+
+**Optimization-based (PROX/LEMO style), NOT RL post-correction.**
+
+PhysHMR (SigAsia'25) proved that RL post-correction **makes things worse**: GVHMR alone gets 5.65mm foot sliding, but adding PHC+ RL correction degrades it to 12.71mm. RL balance-recovery introduces new limb artifacts.
+
+Instead, we use **differentiable energy minimization** — directly optimize SMPL parameters against physical loss terms. This is:
+- **Proven:** PROX (24% V2V improvement), LEMO (eliminates skating), IPMAN (biomechanical stability)
+- **Training-free:** No RL policy to train, no simulator-in-the-loop during correction
+- **Composable:** Each energy term is independent, ablatable, and has a clear physical meaning
+- **Safe:** Constrained optimization can't diverge the way RL rollouts can
+
+**MuJoCo role:** Validation only (verify the output is physically simulable), not correction. This avoids the two-stage failure mode PhysHMR identified.
+
+### Physics Energy Terms — Sources
+
+| Term | What It Does | From | Evidence |
+|------|-------------|------|----------|
+| E_contact | Pin contact vertices to nearest surface | PROX (ICCV'19) | 24% V2V improvement |
+| E_penetration | SDF-based body-scene non-intersection | PROX (ICCV'19) | Core of scene-aware HMR |
+| E_friction | Zero velocity on contact vertices | LEMO (ICCV'21) | Eliminates skating without simulator |
+| E_stability | Center of mass over support polygon | IPMAN (CVPR'23) | Biomechanically grounded balance |
+| E_smooth | Minimize acceleration/jerk over time | LEMO (ICCV'21) | Temporal coherence, reduces jitter |
 
 ---
 
