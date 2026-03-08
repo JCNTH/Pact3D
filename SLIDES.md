@@ -99,16 +99,30 @@ MultiPhys: W-MPJPE 177.1 → 174.7mm (physics correction *helped* pose estimatio
 ## Slide 7: Recommendation — Two-Track
 
 ### Primary: GVHMR
-- Best accuracy + speed
-- Lowest foot sliding (3.0mm) and jitter (12.8)
-- Gravity-view coordinates are physics-friendly
-- ~5000 FPS core network
+- Best accuracy + speed: PA-MPJPE 36.2mm, WA-MPJPE 111.0mm
+- Lowest foot sliding (3.0mm) and jitter (12.8) — least work for physics to fix
+- **Gravity-view coordinates** output global root trajectory with gravity direction — directly gives the world frame our physics layer needs
+- ~5000 FPS core network — physics refinement becomes the bottleneck, not tracking
 
 ### Alternative: Human3R
 - Only method with multi-person + scene + camera in **one forward pass**
 - MIT licensed (publication-safe)
 - 15 FPS, 8 GB VRAM
 - Its explicit weaknesses (penetration, no physics) = exactly what we fix
+- Outputs scene geometry too, so could partially replace DA3 for simple scenes
+
+### Why Not SAM-Body4D?
+- **Camera-relative only** — no world coordinates. You cannot do ground contact, gravity, or penetration physics without a world frame.
+- No global root trajectory — feet "float" in camera space with no notion of floor
+- Built on SAM 3D Body (per-frame) + temporal smoothing — good for tracking identity across frames, wrong abstraction for physics
+- Would need a separate world-grounding step (SLAM or similar), adding complexity with no accuracy gain over GVHMR
+
+### Why Not PromptHMR / WATCH?
+- **PromptHMR** (PA-MPJPE 35.5mm) — marginal accuracy gain over GVHMR, no world trajectory, no gravity-view output. Would need SLAM for world grounding.
+- **WATCH** (WA-MPJPE 106.4mm on EMDB-2) — beats GVHMR on world accuracy but very recent, less tested. Worth monitoring as a drop-in replacement.
+
+### Decision Logic
+The physics layer needs **world-frame SMPL with global root trajectory**. This eliminates camera-relative methods (SAM-Body4D, HMR 2.0, PromptHMR). Among world-grounded methods, GVHMR has the best accuracy-speed tradeoff. Human3R is the fallback for multi-person or license reasons.
 
 ---
 
