@@ -3,6 +3,10 @@
 
 ---
 
+## GVHMR
+
+---
+
 ## Slide: GVHMR (SigAsia'24)
 
 ### World-Grounded Human Motion Recovery via Gravity-View Coordinates
@@ -191,6 +195,9 @@ Each frame is independently gravity-anchored — frame 1000 is as accurate as fr
 **Key insight:** GVHMR itself is near real-time. The bottleneck is entirely off-the-shelf preprocessing that can be swapped for faster alternatives.
 
 ---
+
+## ZipMap
+
 ---
 
 ## Slide: ZipMap (CVPR'26)
@@ -364,6 +371,9 @@ Each frame is independently gravity-anchored — frame 1000 is as accurate as fr
 | Semantic understanding | Architecture | No notion of "person" vs "object" vs "background" — needs external segmentation |
 
 ---
+
+## SAM-Body4D
+
 ---
 
 ## Slide: SAM-Body4D (arXiv'25, 2512.08406)
