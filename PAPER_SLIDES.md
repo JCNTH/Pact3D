@@ -360,7 +360,29 @@ Each frame is independently gravity-anchored — frame 1000 is as accurate as fr
 
 ## Slide: SAM-Body4D Authors — Recent Work
 
-<!-- PLACEHOLDER: To be filled with subagent results -->
+### Mingqi Gao, Yunqi Miao, Jungong Han (2025–2026)
+
+**No new papers on human mesh recovery / body tracking since SAM-Body4D.** Their recent work focuses on video object segmentation:
+
+**Most relevant to body tracking:**
+
+| Paper | Venue | Relevance |
+|-------|-------|-----------|
+| **Sequential Joint Dependency Pose Estimation w/ SSM** (Jungong Han) | AAAI'25 | 2D→3D human pose via state space model along kinematic chains |
+| **LLMI3D: MLLM-based 3D Perception** (Jungong Han) | arXiv'25 | 3D perception from single 2D images using multimodal LLMs |
+| **SAM2S: Segment Anything in Surgical Videos** (Mingqi Gao) | arXiv'25 | Extends SAM2 for surgical video segmentation (related infrastructure) |
+
+**Other recent work (not body-related):**
+
+| Paper | Venue | Topic |
+|-------|-------|-------|
+| **SeC — 1st Place MOSEv2 Challenge** (Gao, Miao, Han) | ICCV'25 Workshop | Complex video object segmentation, enhanced SAM-2 |
+| **FLIPNET: Diffusion Priors for Blind Face Restoration** (Miao, Gao, Han) | ICCV'25 | Face restoration switching between restoration/degradation modes |
+| **CaricatureBooth** (Miao) | CVPR'25 | Data-free interactive caricature generation |
+| **LSNet: See Large, Focus Small** (Han) | CVPR'25 | Lightweight vision network for classification/detection |
+| **EPIC-KITCHENS VOS — 1st Place** (Gao) | CVPR'25 Workshop | Semi-supervised video object segmentation |
+
+**Takeaway:** The group's strength is in **video segmentation** (SAM-based), not body/pose estimation. SAM-Body4D was a one-off composition of their segmentation expertise with existing body models. No follow-up body tracking paper has been published — they appear to be continuing in the VOS direction.
 
 ---
 ---
