@@ -117,7 +117,61 @@ Each frame is independently gravity-anchored — frame 1000 is as accurate as fr
 
 **Preprocessing is the bottleneck:** 46.0s preprocessing vs 0.28s inference.
 
-**For Pact3D:** GVHMR's weaknesses (foot sliding, penetration, no scene) are exactly what the physics layer fixes.
+---
+
+## Slide: GVHMR — Main Components
+
+### Pipeline
+
+| Component | Type | Role | Swappable? |
+|-----------|------|------|-----------|
+| YOLOv8 | Preprocessing | Person detection / bounding boxes | Yes (any detector) |
+| ViTPose | Preprocessing | 2D keypoint estimation | Yes (any 2D pose model) |
+| ViT backbone | Preprocessing | Image feature extraction | Yes |
+| DPVO | Preprocessing | Camera motion / relative rotations | Yes (any visual odometry) |
+| Early fusion module | Core | Map heterogeneous inputs to same dimension | No |
+| Relative Transformer (12L, 8H) | Core | Temporal reasoning across all frames | No |
+| Multi-task MLP heads | Core | Predict pose, shape, trajectory, stationary labels | No |
+| CLIFF | Core | Convert weak-perspective → full-perspective camera | No |
+| CCD-IK solver | Post-processing | Fix local poses to pin stationary joints | No |
+
+**Preprocessing is off-the-shelf and swappable. Core network is the novel contribution.**
+
+---
+
+## Slide: GVHMR — How Can We Use This
+
+### For Pact3D
+
+- **Primary body tracker** — best accuracy-speed tradeoff among world-grounded methods
+- Outputs global root trajectory with gravity alignment → directly provides the world frame the physics layer needs
+- Stationary labels from GVHMR can bootstrap contact detection before the physics layer refines
+- ~5000 FPS core network → physics refinement becomes the bottleneck, not tracking
+- Its weaknesses (foot sliding, penetration, no scene) are **exactly what Pact3D's physics layer fixes**:
+  - E_contact pins feet to surface (PROX)
+  - E_penetration prevents floor clipping (PROX SDF)
+  - E_friction eliminates residual skating (LEMO)
+
+---
+
+## Slide: GVHMR — Edge Cases / Success Cases
+
+### Success Cases
+- **Long videos with walking/running** — GV coord system shines, no drift over 1000+ frames
+- **Static camera footage** — GV coord identical every frame, simplest and most accurate case
+- **Slow camera panning** — small GV rotations between frames, well-handled by DPVO
+
+### Failure Cases
+
+| Edge Case | Which Part Fails | Why |
+|-----------|-----------------|-----|
+| Fast camera rotation | Preprocessing (DPVO) | Large jumps between GV coord systems, noisy rotation estimates |
+| Severe occlusion | Preprocessing (ViTPose) | 2D keypoints wrong/missing → bad input tokens |
+| Multiple people | Architecture | Single-person design, YOLOv8 detects multiple but GVHMR processes one |
+| Gymnastics / swimming / zero-G | GV assumption + training data | GV system assumes clear gravity; inverted/floating bodies break learned priors |
+| Close human-object interaction | Architecture (no scene model) | No object representation → body freely penetrates objects |
+| Textureless environments | Preprocessing (DPVO) | Can't track camera motion → wrong relative rotations for moving camera |
+| Very fast motion | Preprocessing (ViTPose) | Motion blur degrades 2D keypoint detection |
 
 ---
 
@@ -251,6 +305,65 @@ Each frame is independently gravity-anchored — frame 1000 is as accurate as fr
 **Decision:** DA3 for now. Monitor ZipMap for code release.
 
 ---
+
+## Slide: ZipMap — Main Components
+
+### Pipeline
+
+| Component | Role | Novel? |
+|-----------|------|--------|
+| DINOv2 backbone | Image feature extraction | No (pretrained) |
+| Local window self-attention (24 blocks) | Spatial feature processing within each image | No (standard) |
+| **TTT layers** | Compress image features into fast weights — O(N) linear scaling | **Yes (key innovation)** |
+| **SwiGLU-MLP (fast weights)** | Queryable implicit scene representation, updated incrementally | **Yes** |
+| Camera head | Predict intrinsics + extrinsics | No |
+| Depth head | Predict per-pixel depth + confidence | No |
+| Pointmap head | Predict 3D point positions | No |
+
+**1.40B total parameters.** The TTT layers are what makes it scale linearly — everything else is standard transformer machinery.
+
+---
+
+## Slide: ZipMap — How Can We Use This
+
+### For Pact3D
+
+**Currently: cannot use (code unreleased).** Future potential:
+
+- **Scene backbone upgrade** — replace DA3 for camera pose + depth + pointmaps
+- **Long video support** — O(N) scaling handles arbitrarily long sequences (vs VGGT's O(N²) limit of ~60 frames)
+- **Camera poses** — could replace DPVO for GVHMR's camera rotation input
+- **Streaming mode** — enables online processing pipeline
+
+**Blockers before adoption:**
+1. Code/weights must be released
+2. Need to verify metric depth (paper shows relative only — physics needs meters)
+3. H100 requirement vs our RTX 4090 target
+4. License must be permissive
+
+**Timeline:** Monitor for CVPR'26 code release (likely June-July 2026).
+
+---
+
+## Slide: ZipMap — Edge Cases / Success Cases
+
+### Success Cases
+- **Very long videos (750+ frames)** — linear scaling means no memory explosion, unlike VGGT/DUSt3R
+- **Large image collections** — designed for unordered photo sets, robust to varying viewpoints
+- **Indoor + outdoor scenes** — strong generalization across CO3Dv2, RealEstate10K, Tanks & Temples
+
+### Failure Cases
+
+| Edge Case | Which Part Fails | Why |
+|-----------|-----------------|-----|
+| Dynamic scenes (moving people) | TTT scene representation | Designed for static scenes; moving objects violate multi-view consistency assumption |
+| Consumer GPU (RTX 3090/4090) | Memory requirements | 1.4B params + fast weights require H100-class memory |
+| Need metric scale | Depth head | Produces relative depth, not metric — physics needs real-world meters |
+| Single-frame input | TTT layers | Need multiple views for TTT to build meaningful scene representation |
+| Real-time streaming | Latency | While O(N), the per-frame cost is still significant for real-time |
+| Semantic understanding | Architecture | No notion of "person" vs "object" vs "background" — needs external segmentation |
+
+---
 ---
 
 ## Slide: SAM-Body4D (arXiv'25, 2512.08406)
@@ -298,6 +411,24 @@ Each frame is independently gravity-anchored — frame 1000 is as accurate as fr
 
 ---
 
+## Slide: SAM-Body4D — Main Components
+
+### Pipeline (All Off-the-Shelf, No Training)
+
+| Component | Model | Role | Novel usage? |
+|-----------|-------|------|-------------|
+| Video segmentation | SAM 3 | Identity-consistent masks across frames via memory mechanism | Applied to body tracking |
+| Occlusion detection | Area + IoU heuristic | Detect when body becomes occluded (area increases, IoU drops) | **Yes (novel criterion)** |
+| Amodal completion | Diffusion-VAS | Fill in occluded body regions to produce complete masks | Applied to body tracking |
+| Mesh recovery | SAM 3D Body | Per-frame SMPL-like mesh from masked image | No (existing model) |
+| Temporal smoothing | Kalman filter | Reduce jitter between frames | No (standard) |
+| Depth cues | Depth-Anything V2 | Provide relative depth for mesh fitting | No (existing model) |
+| Geometry cues | MoGe-2 | Provide surface normals/geometry | No (existing model) |
+
+**Key insight:** The novelty is the **composition** of existing models + the occlusion detection criterion, not any individual component.
+
+---
+
 ## Slide: SAM-Body4D — Why Good / Where It Fails
 
 ### Why Good
@@ -319,16 +450,26 @@ Each frame is independently gravity-anchored — frame 1000 is as accurate as fr
 | **Per-frame mesh recovery** | SAM 3D Body is per-frame; temporal coherence only from Kalman | Architecture |
 | **No global trajectory** | Feet "float" in camera space | Architecture |
 
-### Edge Cases
+---
 
-**Success cases:**
-- Multi-person scenes with frequent occlusions (SAM 3 memory handles re-identification)
-- Crowded scenes where standard detectors fail
+## Slide: SAM-Body4D — Edge Cases / Success Cases
 
-**Failure cases:**
-- Full-body occlusion for extended periods (SAM 3 memory expires)
-- Fast motion blur (SAM 3 segmentation degrades)
-- Scenes needing world-space physics (no world frame at all)
+### Success Cases
+- **Multi-person with frequent occlusions** — SAM 3 memory re-identifies people after temporary occlusion
+- **Crowded scenes** — handles overlapping people where standard bounding-box detectors fail
+- **Partial occlusion (behind furniture, other people)** — Diffusion-VAS completes the body before mesh fitting, so SAM 3D Body sees a "clean" input
+
+### Failure Cases
+
+| Edge Case | Which Part Fails | Why |
+|-----------|-----------------|-----|
+| Full-body occlusion for extended periods | SAM 3 memory | Memory mechanism expires, loses identity |
+| Fast motion blur | SAM 3 segmentation | Mask quality degrades, downstream mesh is wrong |
+| World-space physics needed | Architecture (no world frame) | Camera-relative only — can't reason about floor, gravity, contact |
+| Non-SMPL body types (children, extreme body shapes) | SAM 3D Body | Underlying body model has limited shape space |
+| Person wearing loose/flowing clothing | SAM 3D Body + Diffusion-VAS | Amodal completion may hallucinate wrong body shape under clothing |
+| Need for quantitative benchmarks | Evaluation | Paper only shows qualitative results — can't verify accuracy claims |
+| Long videos (1000+ frames) | SAM 3 memory + Kalman filter | Memory grows, Kalman filter may drift without global optimization |
 
 ---
 
