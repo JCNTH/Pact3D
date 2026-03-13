@@ -658,16 +658,120 @@ AI has its own cursor/presence on canvas. Shows activity status. Comments become
 
 | Priority | Capability | Best Option | UX Win |
 |----------|-----------|-------------|--------|
-| 1 | NL video understanding | Gemini 3 Flash / LLaVA-Mini | Conversational editing commands |
-| 2 | Object segmentation | SAM 2 + Grounded SAM 2 | NL-driven selection of anything |
-| 3 | Body mesh tracking | SAM-Body4D | Identity-consistent 4D meshes |
-| 4 | Agentic orchestration | VideoAgent / custom | Multi-step NL workflows |
-| 5 | 3D scene from video | 4D Gaussian Splatting | Novel viewpoint rendering |
-| 6 | Audio from physics | ElevenLabs SFX + V2A | Physics-driven foley |
-| 7 | Video generation | Veo 3.1 / Sora 2 API | Scene extension, bg replacement |
-| 8 | World model "what if" | NVIDIA Cosmos + CWMDT | Counterfactual re-simulation |
-| 9 | Real-time preview | StreamMind / Decart | Live editing feedback |
-| 10 | Style transfer | Mago Studio / DomoAI | Body-aware artistic stylization |
+| 1 | **4D body mesh tracking** | **SAM-Body4D (A100)** | **Identity-consistent meshes — the core moat** |
+| 2 | NL object selection | Grounded SAM 2 | Open-vocabulary "select the striker" |
+| 3 | Scene geometry | Depth Anything 3 | Depth maps, background separation |
+| 4 | NL command parsing | Claude API | Intent → action routing |
+| 5 | Agentic orchestration | Custom action router | Multi-step NL workflows |
+| 6 | Audio from physics | ElevenLabs SFX API | Physics-driven foley (stretch goal) |
+| 7 | Video generation | Veo 3.1 / Sora 2 API | Scene extension (stretch goal) |
+| 8 | World model "what if" | NVIDIA Cosmos | Counterfactual re-sim (only if demo needs it) |
+
+---
+
+## Product Spec: CutPhysics MVP
+
+### Hardware: A100 80GB GPU
+
+SAM-Body4D is the **primary backbone** — not a fallback. Full 5-model pipeline runs natively on A100.
+
+### Product Flow
+
+```
+Landing Page → Upload → Processing → Editor → Export
+```
+
+**1. Landing Page**
+- Clean hero: "Edit video with geometry, not pixels"
+- One CTA: upload a video
+- Demo reel showing mesh-aware edits (auto-playing, muted)
+- Untitled UI light theme, Inter font, borderless cards
+
+**2. Upload + Processing**
+- Drag-and-drop or URL paste
+- Processing pipeline (transparent to user via agent sidebar):
+  1. SAM 3 → masklet generation (identity-consistent segmentation)
+  2. Diffusion-VAS → occlusion-aware refinement
+  3. SAM 3D Body → per-person 4D mesh recovery
+  4. Depth Anything 3 → scene geometry
+  5. Grounded SAM 2 → object vocabulary index
+- Progress shown as pipeline stages, not a spinner
+
+**3. Editor (Main View)**
+
+```
+┌──────────────────────────────────────┬──────────────────┐
+│                                      │  Agent Sidebar   │
+│         Video Canvas                 │                  │
+│         (overlays rendered           │  ┌────────────┐  │
+│          on WebGL layer)             │  │ Current     │  │
+│                                      │  │ Decision    │  │
+│                                      │  │             │  │
+├──────────────────────────────────────┤  │ "Selected   │  │
+│  ┌─ NL Command Bar ──────────────┐   │  │  player #7  │  │
+│  │ "Highlight the striker in red" │   │  │  via pose   │  │
+│  └────────────────────────────────┘   │  │  matching"  │  │
+│                                      │  ├────────────┤  │
+│  ── Timeline ──●──────────── 0:34    │  │ History    │  │
+│  [masks] [meshes] [depth] [physics]  │  │ ...        │  │
+│                                      │  └────────────┘  │
+└──────────────────────────────────────┴──────────────────┘
+```
+
+- **Command bar:** NL input, parsed by Claude/Gemini API → action router
+- **Canvas:** Video with WebGL overlay layer for masks, meshes, effects
+- **Timeline:** Multi-layer (masks, meshes, depth, physics tracks)
+- **Agent sidebar:** Transparent decision log — shows what the AI chose, why, and what models it invoked. Real-time streaming. Collapsible.
+
+**4. Agent Sidebar (Transparent AI)**
+- Every NL command shows its execution trace:
+  - Intent parsed: "highlight striker in red"
+  - Model invoked: Grounded SAM 2 → "striker" → person #3
+  - Mesh lookup: SAM-Body4D mesh for person #3
+  - Effect applied: red tint on masklet frames 0-847
+  - Render time: 1.2s
+- Errors shown honestly: "Could not distinguish players — try adding jersey number"
+- User can click any step to inspect or override
+
+**5. Export**
+- Rendered video (FFmpeg compositing)
+- Options: resolution, format, with/without overlays
+- Download or share link
+
+### MVP Feature Set (Demo Day)
+
+| Feature | Model | Demo Command |
+|---------|-------|-------------|
+| NL object selection | Grounded SAM 2 | "Select the goalkeeper" |
+| Identity-consistent tracking | SAM 3 (via SAM-Body4D) | "Track player #7 across the clip" |
+| Highlight/blur/isolate | SAM-Body4D masklets | "Blur everyone except the dancer" |
+| Skeleton overlay | SAM-Body4D meshes | "Show skeleton on all players" |
+| Pose-based keyframes | SAM-Body4D meshes | "Freeze when his arm is fully extended" |
+| Depth visualization | Depth Anything 3 | "Show depth map" |
+| Background removal | SAM-Body4D + DA3 | "Remove the background" |
+| Agent transparency | Sidebar | Every command shows execution trace |
+
+### What's NOT in MVP (avoid clutter)
+
+- World models — only add if a specific demo command genuinely needs it
+- Voice control
+- Real-time preview (process then display is fine for demo)
+- Collaborative editing
+- Mobile support
+
+### Tech Stack
+
+| Layer | Choice | Why |
+|-------|--------|-----|
+| Frontend | React 19 + Tailwind v4.1 + React Aria | Untitled UI native stack |
+| Canvas | WebGL (Three.js / react-three-fiber) | Mesh + overlay rendering |
+| Backend | FastAPI (Python) | Direct access to ML models |
+| ML Pipeline | SAM-Body4D (primary) | A100-native, full 4D mesh |
+| Scene | Depth Anything 3 | Apache-2.0, <12GB VRAM |
+| NL Selection | Grounded SAM 2 | Open-vocabulary segmentation |
+| NL Parsing | Claude API | Intent extraction + action routing |
+| Video I/O | FFmpeg | Compositing + export |
+| GPU | A100 80GB | Runs full SAM-Body4D pipeline |
 
 ---
 
