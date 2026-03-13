@@ -671,72 +671,314 @@ AI has its own cursor/presence on canvas. Shows activity status. Comments become
 
 ## Product Spec: CutPhysics MVP
 
-### Hardware: A100 80GB GPU
-
-SAM-Body4D is the **primary backbone** — not a fallback. Full 5-model pipeline runs natively on A100.
-
-### Product Flow
+### System Architecture
 
 ```
-Landing Page → Upload → Processing → Editor → Export
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          FRONTEND (Vercel / Static)                      │
+│                                                                         │
+│   React 19 + Tailwind v4.1 + React Aria (Untitled UI)                  │
+│   ┌───────────┐  ┌──────────────────────┐  ┌────────────────────────┐  │
+│   │ Landing   │→ │ Editor               │→ │ Export                 │  │
+│   │ Page      │  │ Canvas + Timeline    │  │ Download / Share       │  │
+│   │           │  │ Command Bar          │  │                        │  │
+│   │           │  │ Agent Sidebar (SSE)  │  │                        │  │
+│   └───────────┘  └──────────┬───────────┘  └────────────────────────┘  │
+│                              │ REST + WebSocket + SSE                    │
+└──────────────────────────────┼──────────────────────────────────────────┘
+                               │
+┌──────────────────────────────┼──────────────────────────────────────────┐
+│                          BACKEND (RunPod / FastAPI)                      │
+│                              │                                          │
+│   ┌──────────────────────────▼───────────────────────────────────────┐  │
+│   │                    API Gateway (FastAPI)                          │  │
+│   │  /upload  /process  /edit  /export  /agent-stream (SSE)          │  │
+│   └────────┬────────────┬────────────┬───────────────────────────────┘  │
+│            │            │            │                                   │
+│   ┌────────▼────┐ ┌─────▼──────┐ ┌──▼───────────┐                     │
+│   │ Ingestion   │ │ NL Engine  │ │ Render Engine │                     │
+│   │ Pipeline    │ │            │ │              │                     │
+│   │ (on upload) │ │ Claude API │ │ FFmpeg       │                     │
+│   │             │ │ → Action   │ │ + WebGL      │                     │
+│   │             │ │   Router   │ │   snapshot   │                     │
+│   └──────┬──────┘ └─────┬──────┘ └──────────────┘                     │
+│          │              │                                               │
+│   ┌──────▼──────────────▼────────────────────────────────────────────┐  │
+│   │                    ML Pipeline (A100 80GB)                        │  │
+│   │                                                                   │  │
+│   │  ┌─────────┐   ┌──────────┐   ┌───────────┐   ┌──────────────┐  │  │
+│   │  │ SAM 3   │──→│Diffusion │──→│ SAM 3D    │   │ Depth        │  │  │
+│   │  │ segment │   │ VAS      │   │ Body      │   │ Anything 3   │  │  │
+│   │  │ +track  │   │ occlude  │   │ mesh      │   │ scene geo    │  │  │
+│   │  └─────────┘   └──────────┘   └───────────┘   └──────────────┘  │  │
+│   │                                                                   │  │
+│   │  ┌──────────────┐   ┌──────────────────────────────────────────┐ │  │
+│   │  │ Grounded     │   │ Result Store (Redis + Object Storage)    │ │  │
+│   │  │ SAM 2        │   │ masklets, meshes, depth maps, metadata   │ │  │
+│   │  │ NL→objects   │   └──────────────────────────────────────────┘ │  │
+│   │  └──────────────┘                                                │  │
+│   └──────────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-**1. Landing Page**
-- Clean hero: "Edit video with geometry, not pixels"
-- One CTA: upload a video
-- Demo reel showing mesh-aware edits (auto-playing, muted)
-- Untitled UI light theme, Inter font, borderless cards
-
-**2. Upload + Processing**
-- Drag-and-drop or URL paste
-- Processing pipeline (transparent to user via agent sidebar):
-  1. SAM 3 → masklet generation (identity-consistent segmentation)
-  2. Diffusion-VAS → occlusion-aware refinement
-  3. SAM 3D Body → per-person 4D mesh recovery
-  4. Depth Anything 3 → scene geometry
-  5. Grounded SAM 2 → object vocabulary index
-- Progress shown as pipeline stages, not a spinner
-
-**3. Editor (Main View)**
+### Data Flow: What Happens When You Upload a Video
 
 ```
-┌──────────────────────────────────────┬──────────────────┐
-│                                      │  Agent Sidebar   │
-│         Video Canvas                 │                  │
-│         (overlays rendered           │  ┌────────────┐  │
-│          on WebGL layer)             │  │ Current     │  │
-│                                      │  │ Decision    │  │
-│                                      │  │             │  │
-├──────────────────────────────────────┤  │ "Selected   │  │
-│  ┌─ NL Command Bar ──────────────┐   │  │  player #7  │  │
-│  │ "Highlight the striker in red" │   │  │  via pose   │  │
-│  └────────────────────────────────┘   │  │  matching"  │  │
-│                                      │  ├────────────┤  │
-│  ── Timeline ──●──────────── 0:34    │  │ History    │  │
-│  [masks] [meshes] [depth] [physics]  │  │ ...        │  │
-│                                      │  └────────────┘  │
-└──────────────────────────────────────┴──────────────────┘
+User drops video
+       │
+       ▼
+  ┌─────────┐     Extract frames (FFmpeg)
+  │ INGEST  │────→ Store raw frames to disk
+  └────┬────┘     Create job record
+       │
+       ▼
+  ┌─────────┐     SAM 3 processes all frames
+  │ STAGE 1 │────→ Output: per-person masklets (identity-consistent)
+  │ Segment │     Agent sidebar: "Found 4 people, tracking..."
+  └────┬────┘     VRAM: ~20-30GB
+       │
+       ▼
+  ┌─────────┐     Diffusion-VAS on occluded frames only
+  │ STAGE 2 │────→ Output: refined masklets (occlusion-completed)
+  │ Refine  │     Agent sidebar: "Refined 23 occluded frames"
+  └────┬────┘     VRAM: ~15-20GB (sequential with Stage 1)
+       │
+       ▼
+  ┌─────────┐     SAM 3D Body per person
+  │ STAGE 3 │────→ Output: SMPL meshes per frame per person
+  │ Mesh    │     Agent sidebar: "Generated 4D meshes for 4 people"
+  └────┬────┘     VRAM: ~20-30GB (sequential with Stage 2)
+       │
+       ▼
+  ┌─────────┐     DA3-Metric-Large on all frames
+  │ STAGE 4 │────→ Output: metric depth maps + camera poses
+  │ Scene   │     Agent sidebar: "Scene geometry complete"
+  └────┬────┘     VRAM: ~12GB (can run parallel with Stage 3)
+       │
+       ▼
+  ┌─────────┐     Grounded SAM 2 builds vocabulary
+  │ STAGE 5 │────→ Output: object index ("ball", "goal", "bench"...)
+  │ Index   │     Agent sidebar: "Indexed 12 objects"
+  └────┬────┘     VRAM: ~8GB
+       │
+       ▼
+  ┌─────────┐     All results cached
+  │  READY  │────→ Editor unlocks
+  └─────────┘     User sees: masklets, meshes, depth, object vocab
 ```
 
-- **Command bar:** NL input, parsed by Claude/Gemini API → action router
-- **Canvas:** Video with WebGL overlay layer for masks, meshes, effects
-- **Timeline:** Multi-layer (masks, meshes, depth, physics tracks)
-- **Agent sidebar:** Transparent decision log — shows what the AI chose, why, and what models it invoked. Real-time streaming. Collapsible.
+### Data Flow: What Happens When You Type a Command
 
-**4. Agent Sidebar (Transparent AI)**
-- Every NL command shows its execution trace:
-  - Intent parsed: "highlight striker in red"
-  - Model invoked: Grounded SAM 2 → "striker" → person #3
-  - Mesh lookup: SAM-Body4D mesh for person #3
-  - Effect applied: red tint on masklet frames 0-847
-  - Render time: 1.2s
-- Errors shown honestly: "Could not distinguish players — try adding jersey number"
-- User can click any step to inspect or override
+```
+User: "Highlight the striker in red"
+       │
+       ▼
+  ┌──────────┐    Claude API parses intent
+  │ NL Parse │───→ {action: "highlight", target: "striker",
+  └────┬─────┘     color: "red", frames: "all"}
+       │           Agent sidebar: "Intent: highlight striker in red"
+       ▼
+  ┌──────────┐    Grounded SAM 2 resolves "striker"
+  │ Resolve  │───→ Matches to person #3 (via object index + pose)
+  └────┬─────┘    Agent sidebar: "Resolved 'striker' → person #3"
+       │
+       ▼
+  ┌──────────┐    Look up pre-computed masklets for person #3
+  │ Lookup   │───→ Masklet frames 0-847 for person #3
+  └────┬─────┘    Agent sidebar: "Retrieved masklet (847 frames)"
+       │
+       ▼
+  ┌──────────┐    Apply red tint overlay on masklet region
+  │ Render   │───→ Composite overlay → WebGL canvas update
+  └────┬─────┘    Agent sidebar: "Applied red highlight, 1.2s"
+       │
+       ▼
+  ┌──────────┐    User sees result in canvas
+  │ Preview  │───→ Timeline shows highlight track
+  └──────────┘    Undo available
+```
 
-**5. Export**
-- Rendered video (FFmpeg compositing)
-- Options: resolution, format, with/without overlays
-- Download or share link
+### User Journey (Screen by Screen)
+
+```
+SCREEN 1: LANDING
+┌─────────────────────────────────────────────────────────────┐
+│                                                             │
+│  ○ CutPhysics                              Sign in         │
+│                                                             │
+│                                                             │
+│         Edit video with geometry,                           │
+│              not pixels.                                    │
+│                                                             │
+│    The first video editor that understands 3D               │
+│    human bodies, scene depth, and physics.                  │
+│                                                             │
+│         ┌──────────────────────────┐                        │
+│         │   Drop a video to start  │                        │
+│         └──────────────────────────┘                        │
+│                                                             │
+│  ┌────────────────────────────────────────────────────────┐ │
+│  │  ▶ Demo reel (auto-playing, muted)                    │ │
+│  │    skeleton overlay → highlight → depth → bg removal   │ │
+│  └────────────────────────────────────────────────────────┘ │
+│                                                             │
+│  "Blur everyone except the dancer"  →  [result thumbnail]  │
+│  "Show skeleton on all players"     →  [result thumbnail]  │
+│  "Freeze when arm fully extended"   →  [result thumbnail]  │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+
+SCREEN 2: PROCESSING
+┌─────────────────────────────────────────────────────────────┐
+│  ○ CutPhysics                                               │
+│                                                             │
+│  Processing: soccer_clip.mp4                                │
+│                                                             │
+│  ●─── Segmentation ──────────────────────── 100%            │
+│  ●─── Occlusion Refinement ──────────────── 100%            │
+│  ◐─── 4D Mesh Recovery ─────────────────────  67%           │
+│  ○─── Scene Geometry ───────────────────────   0%           │
+│  ○─── Object Indexing ──────────────────────   0%           │
+│                                                             │
+│  ┌─ Agent Log ──────────────────────────────────────────┐   │
+│  │ ✓ SAM 3: Found 6 people, 1 ball                      │   │
+│  │ ✓ Diffusion-VAS: Refined 41 occluded frames           │   │
+│  │ ◐ SAM 3D Body: Recovering mesh for person 4/6...     │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                             │
+│  Estimated time remaining: ~45s                             │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+
+
+SCREEN 3: EDITOR
+┌────────────────────────────────────────────┬─────────────────┐
+│                                            │ Agent            │
+│   ┌────────────────────────────────────┐   │                 │
+│   │                                    │   │ ● Processing    │
+│   │         VIDEO CANVAS               │   │                 │
+│   │     (WebGL overlay layer)          │   │ "Highlight the  │
+│   │                                    │   │  striker in red" │
+│   │   Person #3 highlighted in red     │   │                 │
+│   │   Skeleton overlay visible         │   │ ├─ Parse intent │
+│   │                                    │   │ │  highlight,   │
+│   └────────────────────────────────────┘   │ │  striker, red │
+│                                            │ ├─ Resolve      │
+│   ┌────────────────────────────────────┐   │ │  striker →    │
+│   │ Highlight the striker in red       │   │ │  person #3    │
+│   └────────────────────────────────────┘   │ ├─ Lookup mask  │
+│                                            │ │  847 frames   │
+│   ── Video ──────●───────────── 0:28       │ ├─ Render       │
+│   ── Masks ──────████████────── person #3  │ │  1.2s ✓       │
+│   ── Meshes ─────████████────── 4 people   │ │               │
+│   ── Depth ──────████████──────             │ │ ✓ Done        │
+│                                            │ │               │
+│   [Undo] [Redo]          [Export ↗]        │ ─────────────── │
+│                                            │ Previous:       │
+│                                            │ ✓ "Show skel.." │
+│                                            │ ✓ "Track #7..." │
+└────────────────────────────────────────────┴─────────────────┘
+
+
+SCREEN 4: EXPORT
+┌─────────────────────────────────────────────────────────────┐
+│  ○ CutPhysics                                               │
+│                                                             │
+│  Export: soccer_clip_edited.mp4                              │
+│                                                             │
+│  Resolution    [1080p ▾]                                    │
+│  Format        [MP4 (H.264) ▾]                              │
+│  Include       [✓ Overlays] [✓ Highlights] [○ Skeleton]     │
+│                                                             │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  ▶ Preview (first 5s)                                │   │
+│  └──────────────────────────────────────────────────────┘   │
+│                                                             │
+│  ┌──────────────┐  ┌────────────────┐                       │
+│  │  Download ↓  │  │  Share Link 🔗  │                       │
+│  └──────────────┘  └────────────────┘                       │
+│                                                             │
+│  Applied edits:                                             │
+│  • Highlighted striker (person #3) in red                   │
+│  • Skeleton overlay on all players                          │
+│  • Tracked player #7 across clip                            │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### RunPod Deployment Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        RunPod Infrastructure                      │
+│                                                                   │
+│  ┌─────────────────────────────────────────────────────────────┐ │
+│  │              GPU Pod: A100 80GB SXM                         │ │
+│  │              (Community Cloud: ~$1.64/hr)                   │ │
+│  │              (Secure Cloud:    ~$2.49/hr)                   │ │
+│  │                                                             │ │
+│  │  ┌──────────────────────────────────────────────────────┐   │ │
+│  │  │ Docker Container (PyTorch 2.7 + CUDA 11.8)          │   │ │
+│  │  │                                                      │   │ │
+│  │  │  FastAPI server (:8000)                              │   │ │
+│  │  │    ├── /upload      → Ingestion pipeline             │   │ │
+│  │  │    ├── /process     → ML pipeline (sequential)       │   │ │
+│  │  │    ├── /edit        → NL command execution           │   │ │
+│  │  │    ├── /export      → FFmpeg render                  │   │ │
+│  │  │    └── /agent-sse   → Real-time agent log stream     │   │ │
+│  │  │                                                      │   │ │
+│  │  │  ML Models (loaded sequentially, not co-resident):   │   │ │
+│  │  │    SAM 3           ~25GB   ──┐                       │   │ │
+│  │  │    Diffusion-VAS   ~15GB     │ sequential            │   │ │
+│  │  │    SAM 3D Body     ~25GB     │ load/unload           │   │ │
+│  │  │    DA3-Metric-L    ~12GB   ──┘                       │   │ │
+│  │  │    Grounded SAM 2  ~8GB    (fits alongside DA3)      │   │ │
+│  │  │                                                      │   │ │
+│  │  │  Storage:                                            │   │ │
+│  │  │    /workspace (persistent network volume)            │   │ │
+│  │  │    └── checkpoints/  (model weights, ~50GB)          │   │ │
+│  │  │    └── jobs/         (video frames, results)         │   │ │
+│  │  └──────────────────────────────────────────────────────┘   │ │
+│  └─────────────────────────────────────────────────────────────┘ │
+│                                                                   │
+│  Network Volume: 100GB ($0.07/GB/mo = $7/mo)                     │
+│  ├── Model checkpoints (persistent, shared across pod restarts)  │
+│  └── Job results cache                                            │
+│                                                                   │
+│  Estimated cost per 30s video:                                    │
+│  ├── Processing time: ~3-5 min on A100                            │
+│  ├── GPU cost: ~$0.08-0.14 per video                              │
+│  └── Storage: negligible                                          │
+└─────────────────────────────────────────────────────────────────┘
+
+Frontend: Vercel (free tier) or static hosting
+  → Connects to RunPod pod via HTTPS (RunPod provides public URL)
+```
+
+### Model VRAM Strategy (Sequential Loading)
+
+```
+A100 80GB VRAM Budget:
+
+Phase: INGEST (sequential — load one, run, unload, load next)
+  ┌──────────────────────────────────────────────────────┐
+  │ Step 1: SAM 3                        [████████  25GB]│ → masklets
+  │ Step 2: Diffusion-VAS               [█████     15GB]│ → refined masks
+  │ Step 3: SAM 3D Body                  [████████  25GB]│ → 4D meshes
+  │ Step 4: DA3-Metric-Large            [████      12GB]│ → depth maps
+  │ Step 5: Grounded SAM 2             [███        8GB]│ → object index
+  └──────────────────────────────────────────────────────┘
+  Peak: ~25GB (one model at a time). Never exceeds 80GB.
+
+Phase: EDIT (lightweight — only lookups + small models)
+  ┌──────────────────────────────────────────────────────┐
+  │ Grounded SAM 2 (hot)               [███        8GB]│ → resolve NL
+  │ Pre-computed results in RAM/disk                     │ → instant lookup
+  │ Claude API (external)                                │ → NL parsing
+  └──────────────────────────────────────────────────────┘
+  Peak: ~8GB. Editing is fast — no heavy models needed.
+```
 
 ### MVP Feature Set (Demo Day)
 
@@ -771,7 +1013,76 @@ Landing Page → Upload → Processing → Editor → Export
 | NL Selection | Grounded SAM 2 | Open-vocabulary segmentation |
 | NL Parsing | Claude API | Intent extraction + action routing |
 | Video I/O | FFmpeg | Compositing + export |
-| GPU | A100 80GB | Runs full SAM-Body4D pipeline |
+| Infra | RunPod A100 80GB | ~$1.64/hr community, ~$2.49/hr secure |
+
+### Implementation Plan
+
+```
+Phase 1: Foundation (Week 1-2)
+├── Set up RunPod pod with A100 80GB
+│   ├── Docker image: PyTorch 2.7 + CUDA 11.8
+│   ├── Network volume: model checkpoints (~50GB)
+│   └── FastAPI skeleton with health check
+├── SAM-Body4D pipeline running end-to-end
+│   ├── Clone repo, install deps, download checkpoints
+│   ├── Verify: input video → masklets + meshes output
+│   └── Wrap in FastAPI endpoint: POST /process
+├── Frontend scaffold
+│   ├── React 19 + Tailwind v4.1 + Untitled UI tokens
+│   ├── Landing page (static)
+│   └── Upload page with drag-and-drop
+│
+Phase 2: Core Editor (Week 3-4)
+├── Video canvas with WebGL overlay layer
+│   ├── Three.js / react-three-fiber for mesh rendering
+│   ├── Masklet overlay compositing
+│   └── Playback controls + scrubber
+├── NL command bar
+│   ├── Claude API integration for intent parsing
+│   ├── Action router: parse → resolve → lookup → render
+│   └── Grounded SAM 2 for NL → object resolution
+├── Agent sidebar (SSE stream)
+│   ├── Backend: emit events at each pipeline step
+│   ├── Frontend: real-time log with status icons
+│   └── Expandable detail per step
+├── Multi-layer timeline
+│   ├── Mask track (show/hide per person)
+│   ├── Mesh track (skeleton toggle)
+│   └── Depth track (depth map overlay)
+│
+Phase 3: Effects + Polish (Week 5-6)
+├── Highlight / blur / isolate effects
+│   ├── Color tint on masklet region
+│   ├── Gaussian blur on inverse mask
+│   └── Background removal (mask + depth)
+├── Skeleton overlay rendering
+│   ├── SMPL joint positions → 2D projection
+│   └── Bone connections drawn on canvas
+├── Pose-based keyframe detection
+│   ├── Joint angle computation from mesh
+│   └── "Freeze when arm extended" → angle threshold
+├── Export pipeline
+│   ├── FFmpeg compositing (overlays baked into video)
+│   ├── Resolution + format options
+│   └── Download endpoint
+│
+Phase 4: Demo Ready (Week 7-8)
+├── Landing page demo reel
+│   ├── Pre-rendered examples of each feature
+│   └── Auto-playing showcase
+├── Error handling + edge cases
+│   ├── Graceful failures in agent sidebar
+│   ├── "No people found" / "Ambiguous target" flows
+│   └── Timeout handling for long videos
+├── Performance optimization
+│   ├── Model loading/unloading pipeline
+│   ├── Result caching (Redis or disk)
+│   └── Lazy loading for timeline tracks
+└── Demo day prep
+    ├── 3 polished demo scripts
+    ├── Pre-processed sample videos
+    └── Backup: pre-computed results for reliability
+```
 
 ---
 
