@@ -914,12 +914,12 @@ SCREEN 4: EXPORT
 │                        RunPod Infrastructure                      │
 │                                                                   │
 │  ┌─────────────────────────────────────────────────────────────┐ │
-│  │              GPU Pod: A100 80GB SXM                         │ │
-│  │              (Community Cloud: ~$1.64/hr)                   │ │
-│  │              (Secure Cloud:    ~$2.49/hr)                   │ │
+│  │              GPU Pod: A100 80GB PCIe (Persistent)            │ │
+│  │              (Community Cloud: ~$1.19/hr)                   │ │
+│  │              (Secure Cloud:    ~$1.89/hr)                   │ │
 │  │                                                             │ │
 │  │  ┌──────────────────────────────────────────────────────┐   │ │
-│  │  │ Docker Container (PyTorch 2.7 + CUDA 11.8)          │   │ │
+│  │  │ Docker Container (PyTorch 2.x + CUDA 12.1)           │   │ │
 │  │  │                                                      │   │ │
 │  │  │  FastAPI server (:8000)                              │   │ │
 │  │  │    ├── /upload      → Ingestion pipeline             │   │ │
@@ -929,11 +929,11 @@ SCREEN 4: EXPORT
 │  │  │    └── /agent-sse   → Real-time agent log stream     │   │ │
 │  │  │                                                      │   │ │
 │  │  │  ML Models (loaded sequentially, not co-resident):   │   │ │
-│  │  │    SAM 3           ~25GB   ──┐                       │   │ │
-│  │  │    Diffusion-VAS   ~15GB     │ sequential            │   │ │
-│  │  │    SAM 3D Body     ~25GB     │ load/unload           │   │ │
-│  │  │    DA3-Metric-L    ~12GB   ──┘                       │   │ │
-│  │  │    Grounded SAM 2  ~8GB    (fits alongside DA3)      │   │ │
+│  │  │    SAM 3           ~3-4GB  ──┐                       │   │ │
+│  │  │    Diffusion-VAS   ~6-10GB   │ sequential            │   │ │
+│  │  │    SAM 3D Body     ~8-32GB   │ load/unload           │   │ │
+│  │  │    DA3-Large       ~4-8GB  ──┘ (del + empty_cache)   │   │ │
+│  │  │    Grounded SAM 2  ~4-8GB  (fits alongside DA3)      │   │ │
 │  │  │                                                      │   │ │
 │  │  │  Storage:                                            │   │ │
 │  │  │    /workspace (persistent network volume)            │   │ │
@@ -946,15 +946,56 @@ SCREEN 4: EXPORT
 │  ├── Model checkpoints (persistent, shared across pod restarts)  │
 │  └── Job results cache                                            │
 │                                                                   │
-│  Estimated cost per 30s video:                                    │
-│  ├── Processing time: ~3-5 min on A100                            │
-│  ├── GPU cost: ~$0.08-0.14 per video                              │
+│  Estimated cost per 30s video (900 frames):                       │
+│  ├── Processing time: ~15-30 min on A100                          │
+│  │   (Diffusion-VAS is the bottleneck — diffusion is slow)        │
+│  ├── GPU cost: ~$0.30-0.60 per video                              │
 │  └── Storage: negligible                                          │
 └─────────────────────────────────────────────────────────────────┘
 
 Frontend: Vercel (free tier) or static hosting
   → Connects to RunPod pod via HTTPS (RunPod provides public URL)
 ```
+
+### RunPod GPU Options (Verified)
+
+| GPU | VRAM | Community $/hr | Viable? |
+|-----|------|---------------|---------|
+| RTX 4090 | 24 GB | ~$0.39 | No — SAM 3D Body needs 32GB+ |
+| A6000 | 48 GB | ~$0.76 | Tight — needs strict sequential + testing |
+| **A100 PCIe 80GB** | **80 GB** | **~$1.19** | **Yes — recommended** |
+| A100 SXM 80GB | 80 GB | ~$1.39 | Yes — higher bandwidth |
+| H100 PCIe | 80 GB | ~$1.99 | Yes — faster but 1.7x cost |
+
+**Why Persistent Pod (not Serverless):**
+- Multi-stage pipeline needs stateful sequential model loading
+- Intermediate results stored between stages (frames, masklets, meshes)
+- FFmpeg compositing needs filesystem access
+- Serverless = single handler, stateless — wrong fit
+
+### RunPod Setup Steps
+
+```
+1. Create RunPod account, load $25+ credit
+2. Create Network Volume (100GB) in data center with A100 availability
+3. Build Docker image:
+   FROM nvidia/cuda:12.1.0-devel-ubuntu22.04
+   + PyTorch 2.x + SAM-Body4D deps + FFmpeg + FastAPI
+4. Upload model weights to Network Volume (~50GB)
+   OR bake into Docker image (larger but no cold-start downloads)
+5. Deploy Persistent Pod: A100 80GB PCIe, attach Network Volume
+6. Expose FastAPI on :8000 via RunPod proxy (HTTPS)
+7. Test with 5s video first — monitor VRAM with nvidia-smi
+```
+
+### Gotchas
+
+- Docker must be `linux/amd64` (not ARM)
+- CUDA driver on RunPod host may lag — pin CUDA 12.1 in Dockerfile
+- Network Volumes only available in certain data centers
+- Container disk is ephemeral — model weights go on Network Volume
+- No pre-built SAM-Body4D template exists — must build custom image
+- SAM 3D Body has reported OOM spikes — use `torch.cuda.empty_cache()` aggressively
 
 ### Model VRAM Strategy (Sequential Loading)
 
@@ -963,13 +1004,14 @@ A100 80GB VRAM Budget:
 
 Phase: INGEST (sequential — load one, run, unload, load next)
   ┌──────────────────────────────────────────────────────┐
-  │ Step 1: SAM 3                        [████████  25GB]│ → masklets
-  │ Step 2: Diffusion-VAS               [█████     15GB]│ → refined masks
-  │ Step 3: SAM 3D Body                  [████████  25GB]│ → 4D meshes
-  │ Step 4: DA3-Metric-Large            [████      12GB]│ → depth maps
-  │ Step 5: Grounded SAM 2             [███        8GB]│ → object index
+  │ Step 1: SAM 3                       [██         4GB]│ → masklets
+  │ Step 2: Diffusion-VAS              [████      10GB]│ → refined masks
+  │ Step 3: SAM 3D Body                [████████  32GB]│ → 4D meshes ⚠️
+  │ Step 4: DA3-Metric-Large           [███        8GB]│ → depth maps
+  │ Step 5: Grounded SAM 2            [███        8GB]│ → object index
   └──────────────────────────────────────────────────────┘
-  Peak: ~25GB (one model at a time). Never exceeds 80GB.
+  Peak: ~32GB (SAM 3D Body). Fits A100 80GB with headroom.
+  ⚠️ SAM 3D Body can spike — test with nvidia-smi on first run.
 
 Phase: EDIT (lightweight — only lookups + small models)
   ┌──────────────────────────────────────────────────────┐
@@ -1013,7 +1055,7 @@ Phase: EDIT (lightweight — only lookups + small models)
 | NL Selection | Grounded SAM 2 | Open-vocabulary segmentation |
 | NL Parsing | Claude API | Intent extraction + action routing |
 | Video I/O | FFmpeg | Compositing + export |
-| Infra | RunPod A100 80GB | ~$1.64/hr community, ~$2.49/hr secure |
+| Infra | RunPod A100 80GB PCIe (Persistent Pod) | ~$1.19/hr community, ~$1.89/hr secure |
 
 ### Implementation Plan
 
