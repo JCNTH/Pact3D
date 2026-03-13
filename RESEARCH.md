@@ -536,15 +536,70 @@ Extend the digital twin to include SAM-Body4D body meshes as first-class entitie
 
 ## UX Design Direction
 
-### Design System: Untitled UI-Inspired
+### Design System: Untitled UI
 
-**Theme:** Light, minimal, borderless. Reference: [Untitled UI PRO v7.0](https://www.figma.com/design/YbdR1kLiOU262EEicORFYh/)
+**Reference:** [Untitled UI PRO v7.0](https://www.figma.com/design/YbdR1kLiOU262EEicORFYh/) — world's largest Figma UI kit (10,000+ components, 900+ variables, 420+ pages). Created by Jordan Hughes. Also ships as React + Tailwind CSS v4.1 + React Aria.
 
 **Core principles:**
-- **Light theme** with warm neutrals, not cold grays
-- **Borderless components** — use spacing and subtle shadows instead of borders
+- **Light theme** with cool-tinted neutrals (grays lean blue, not warm)
+- **Borderless components** — subtle layered shadows and background tints instead of borders
 - **Inline styles** — controls appear contextually, not in fixed panels
 - **Progressive disclosure** — simple by default, powerful on demand
+- **Subtle skeuomorphism** — buttons have minimal depth (shadow + gradient), not flat
+- **Tinted shadows** — `rgba(10, 13, 18, ...)` not pure black. Multiple layers per level
+
+### Color Palette (Light Theme)
+
+**Grays (foundation):**
+
+| Token | Hex | Usage |
+|-------|-----|-------|
+| Gray 25 | `#FCFCFD` | Subtle backgrounds |
+| Gray 50 | `#F9FAFB` | Page backgrounds, alternate rows |
+| Gray 100 | `#F2F4F7` | Secondary backgrounds, hover |
+| Gray 200 | `#E4E7EC` | Dividers (instead of borders) |
+| Gray 300 | `#D0D5DD` | Input borders (when needed) |
+| Gray 500 | `#667085` | Secondary text (AA) |
+| Gray 600 | `#475467` | Default body text (AAA, 7.65 ratio) |
+| Gray 700 | `#344054` | Strong body text |
+| Gray 900 | `#101828` | Headings, highest contrast |
+| White | `#FFFFFF` | Primary background |
+
+**Brand (customizable, default purple):**
+
+| Token | Hex | Usage |
+|-------|-----|-------|
+| brand-600 | `#7F56D9` | Primary button default |
+| brand-700 | `#6941C6` | Hover state |
+
+### Typography
+- **Font:** Inter (variable, 100-900 weight + optical size axis)
+- **Body:** Gray 600 (AAA accessible), not Gray 500
+- **Scale:** 6 display sizes (2xl→xs) + 5 text sizes (xl→xs)
+- **Features:** Tabular figures (`tnum`) for numeric data
+
+### Shadow System (layered, not single box-shadow)
+
+| Level | Characteristic |
+|-------|---------------|
+| shadow-md | `0px 4px 5px rgba(10,13,18,0.08)` + `0px 2px 2px rgba(10,13,18,0.04)` |
+| shadow-lg | 3 layers, max opacity 0.08 |
+| shadow-xl | 3 layers, soft diffused |
+| shadow-2xl | `0px 24px 36px rgba(10,13,18,0.16)` + tight layer |
+
+### Border Philosophy
+- Cards use **shadow elevation** instead of borders
+- Section separation via **background color** (White vs Gray 50) not lines
+- Input borders only when necessary (Gray 300)
+- Inline CTAs embedded in content flow, not boxed
+
+### Tech Stack
+```
+React 19.1 + Tailwind CSS v4.1 + TypeScript 5.8 + React Aria
+CSS layers: @layer reset, base, tokens, recipes, utilities
+CSS variables: --color-brand-*, --color-gray-*
+CLI: npx @untitleduico/cli tailwind
+```
 
 ### Figma References
 
