@@ -417,19 +417,24 @@ A natural language video editor built on SAM-Body4D that understands the **3D ge
 
 ## World Models Research
 
-### Available Models
+### Open-Source Models (code + weights downloadable)
 
-| Model | What It Does | Status | License | Integration Path |
-|-------|-------------|--------|---------|-----------------|
-| [NVIDIA Cosmos](https://github.com/nvidia-cosmos/cosmos-predict2) | Action-conditioned video prediction | Open-source, HF weights | NVIDIA Open Model | **Best near-term.** Fine-tune on human data with SAM-Body4D action labels |
-| [Aether](https://github.com/OpenRobotLab/Aether) | 4D reconstruction + action prediction + planning | Open-source, Gradio demo | Apache-2.0 | Unified 4D + planning. ICCV'25 Outstanding Paper |
-| [DIAMOND](https://github.com/eloialonso/diamond) | RL agent in diffusion world model | Fully open-source | MIT | Architectural reference for action-conditioned prediction |
-| [Oasis](https://oasis-model.github.io/) | Real-time AI Minecraft (20fps) | Open-source | Open | Real-time generation reference |
-| [AutoVFX](https://github.com/haoyuhsu/autovfx) | NL → physics VFX via Blender | Open-source | Available | **Closest to NL editor.** Extend with SAM-Body4D meshes |
-| [PhysDreamer](https://physdreamer.github.io/) | Physics interaction with 3D objects | Open-source | Available | Physics for non-human scene objects |
-| [MIMO](https://github.com/menyifang/MIMO) | Controllable character video synthesis | Open-source | Available | Identity swap + motion retarget |
-| [SAM 2](https://github.com/facebookresearch/sam2) | Promptable video segmentation | Open-source | Apache-2.0 | Core segmentation backbone |
-| [Grounded SAM 2](https://github.com/IDEA-Research/Grounded-SAM-2) | Open-vocabulary video segmentation | Open-source | Apache-2.0 | NL-driven object selection |
+| Model | What It Does | License | Hardware | Integration Path |
+|-------|-------------|---------|----------|-----------------|
+| [NVIDIA Cosmos](https://github.com/nvidia-cosmos/cosmos-predict2.5) | Action-conditioned video prediction | Apache-2.0 (code) + NVIDIA Open Model (weights) | A100 80GB (2B); multi-GPU (14B) | **Best near-term.** Fine-tune on human data with SAM-Body4D action labels |
+| [Aether](https://github.com/OpenRobotLab/Aether) | 4D reconstruction + action prediction + planning | MIT | A100 80GB | Unified 4D + planning. ICCV'25 Outstanding Paper |
+| [DIAMOND](https://github.com/eloialonso/diamond) | RL agent in diffusion world model | MIT | Consumer GPU | Architectural reference for action-conditioned prediction |
+| [Oasis 500M](https://github.com/etched-ai/open-oasis) | Real-time AI Minecraft | MIT | Consumer GPU (1-2 FPS) | Real-time generation reference |
+| [SAM 2](https://github.com/facebookresearch/sam2) | Promptable video segmentation | Apache-2.0 | Consumer GPU | Core segmentation backbone |
+| [Grounded SAM 2](https://github.com/IDEA-Research/Grounded-SAM-2) | Open-vocabulary video segmentation | Apache-2.0 | Standard GPU | NL-driven object selection |
+| [AutoVFX](https://github.com/haoyuhsu/autovfx) | NL → physics VFX via Blender | No license file (caution) | Varies | **Closest to NL editor.** Extend with SAM-Body4D meshes |
+| [PhysDreamer](https://github.com/a1600012888/PhysDreamer) | Physics interaction with 3D objects | Check repo | Not specified | Physics for non-human scene objects. Weights on HF |
+| [PhysGen3D](https://github.com/by-luckk/PhysGen3D) | Single image → interactive 3D scene with physics | Check repo | Not specified | Freeze frame → modify → re-simulate |
+| [MIMO](https://github.com/menyifang/MIMO) | Controllable character video synthesis | Check repo | 40GB+ VRAM | Identity swap + motion retarget |
+| [LLaVA-Video](https://github.com/LLaVA-VL/LLaVA-NeXT) | Video understanding VLM | Llama 2 Community | 16GB+ VRAM | NL video Q&A, scene understanding |
+| [VideoAgent](https://github.com/YueFan1014/VideoAgent) | Memory-augmented video agent | Check repo | RTX 4090 24GB | Agentic video understanding |
+| [Cutie-Roto](https://github.com/Zarxrax/Cutie-Roto) | Video object segmentation / rotoscoping | MIT | Standard GPU | Free rotoscoping alternative |
+| [4D Gaussian Splatting](https://github.com/hustvl/4DGaussians) | Dynamic scene reconstruction at 82fps | Non-commercial (Inria base) | RTX 3090 | Novel viewpoint rendering |
 
 ### API-Available Models
 
@@ -439,11 +444,15 @@ A natural language video editor built on SAM-Body4D that understands the **3D ge
 | Veo 3.1 (Google) | 60s video, 1080p, native audio, lip-sync | Gemini API | Reference-image conditioned generation |
 | Gemini 3 Flash | Video understanding, 1hr+ | API | NL command parsing, temporal reasoning |
 | ElevenLabs SFX V2 | Text-to-sound-effects, 48kHz | API | Physics-driven foley from contact events |
+| WorldLabs | 3D scene generation from images | API | Scene creation, spatial understanding |
 
 ### Closed-Source (Not Available)
-- GameNGen (Google) — no public weights
+- GameNGen (Google) — no official weights, only unofficial repros
 - Genie 2/3 (DeepMind) — not released, Project Genie limited to AI Ultra users
 - UniSim (Berkeley/DeepMind) — no public weights
+- CWMDT — paper only, no code released
+- InterDyn — paper only, no code released
+- Visual Particle Dynamics — no public repo
 
 ### Key Integration: CWMDT (Counterfactual World Models via Digital Twin)
 
